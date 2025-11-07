@@ -6,6 +6,8 @@ import hashlib
 import difflib
 import os
 import json
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # 環境変数から設定を取得（Koyeb用）
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
@@ -34,6 +36,28 @@ if not DISCORD_TOKEN or CHANNEL_ID == 0:
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+
+# ヘルスチェック用の簡易HTTPサーバー
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    
+    def log_message(self, format, *args):
+        # ログ出力を抑制
+        pass
+
+def run_health_server():
+    port = int(os.getenv('PORT', 8000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    print(f"ヘルスチェックサーバー起動: ポート {port}")
+    server.serve_forever()
+
+# ヘルスチェックサーバーを別スレッドで起動
+health_thread = Thread(target=run_health_server, daemon=True)
+health_thread.start()
 
 def get_page_content(url, selector=None):
     """ウェブページのコンテンツを取得"""
