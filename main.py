@@ -223,16 +223,6 @@ async def on_message(message):
 # ★この部分を削除または変更
 # if __name__ == "__main__":
 #     client.run(DISCORD_TOKEN)
-```
-
-主な変更点：
-1. `create_client()` 関数を追加（リトライ時に新しいインスタンスを作成できるように）
-2. 最後の `if __name__ == "__main__":` ブロックを**削除**（app.pyから起動するため不要）
-3. `exit(1)` をコメントアウト（app.pyからimportされる場合のため）
-
-これで `app.py` から `main.client.run()` が正しく呼ばれるようになります！
-
----
 
 ## デプロイ後の確認
 
@@ -242,3 +232,4 @@ Discord Botを起動しています...
 [INFO] discord.client: logging in using static token
 {client.user名} としてログインしました
 監視中のサイト: X件
+
