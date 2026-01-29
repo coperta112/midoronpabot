@@ -6,9 +6,6 @@ import sys
 import time
 import discord
 
-# main.pyからbotを起動
-import main
-
 app = Flask(__name__)
 
 # Bot起動状態を管理
@@ -17,6 +14,9 @@ bot_thread = None
 retry_count = 0
 MAX_RETRIES = 3
 RETRY_DELAY = 300  # 5分
+
+# main.pyから設定を読み込む
+import main
 
 @app.route('/')
 def home():
@@ -34,9 +34,10 @@ def health():
 @app.route('/status')
 def status():
     """詳細ステータス"""
+    client = main.client
     return {
         "bot_running": bot_running,
-        "bot_user": str(main.client.user) if main.client.user else "Not logged in",
+        "bot_user": str(client.user) if client.user else "Not logged in",
         "monitored_sites": len(main.MONITORED_SITES)
     }, 200
 
@@ -61,8 +62,18 @@ def run_bot():
             if main.CHANNEL_ID == 0:
                 print("警告: CHANNEL_IDが設定されていません")
             
+            # ★重要: main.pyから新しいclientインスタンスを取得
+            # リトライ時は新しいインスタンスが必要
+            if retry_count > 0:
+                print("新しいclientインスタンスを作成しています...")
+                # main.pyを再読み込みして新しいclientを取得
+                import importlib
+                importlib.reload(main)
+            
             bot_running = True
             retry_count = 0  # 成功したらカウントリセット
+            
+            # ★client.run()は1回しか呼べないので、ここで実行
             main.client.run(main.DISCORD_TOKEN)
             
         except discord.errors.HTTPException as e:
@@ -78,6 +89,7 @@ def run_bot():
                     print("=" * 50)
                     bot_running = False
                     time.sleep(wait_time)
+                    # whileループで再試行（新しいclientで）
                 else:
                     print("最大リトライ回数に達しました")
                     print("手動で再デプロイしてください")
@@ -99,6 +111,7 @@ def run_bot():
 def signal_handler(sig, frame):
     """シャットダウンシグナルを処理"""
     print("シャットダウンシグナルを受信しました")
+    global bot_running
     bot_running = False
     sys.exit(0)
 
