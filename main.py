@@ -28,12 +28,19 @@ if not DISCORD_TOKEN or CHANNEL_ID == 0:
         print("ローカルのconfig.pyから設定を読み込みました")
     except ImportError:
         print("エラー: 環境変数またはconfig.pyが必要です")
-        exit(1)
+        # exit(1)  # ★ app.pyからimportされる場合のためコメントアウト
 
 # Botの設定
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
+
+def create_client():
+    """新しいDiscord Clientインスタンスを作成"""
+    intents = discord.Intents.default()
+    intents.message_content = True
+    return discord.Client(intents=intents)
+
+client = create_client()
 
 def get_page_content(url, selector=None):
     """ウェブページのコンテンツを取得"""
@@ -213,5 +220,25 @@ async def on_message(message):
     elif message.content == '!help':
         await message.channel.send("たすけて～")
 
-if __name__ == "__main__":
-    client.run(DISCORD_TOKEN)
+# ★この部分を削除または変更
+# if __name__ == "__main__":
+#     client.run(DISCORD_TOKEN)
+```
+
+主な変更点：
+1. `create_client()` 関数を追加（リトライ時に新しいインスタンスを作成できるように）
+2. 最後の `if __name__ == "__main__":` ブロックを**削除**（app.pyから起動するため不要）
+3. `exit(1)` をコメントアウト（app.pyからimportされる場合のため）
+
+これで `app.py` から `main.client.run()` が正しく呼ばれるようになります！
+
+---
+
+## デプロイ後の確認
+
+再デプロイ後、Renderのログで以下が表示されるか確認してください：
+```
+Discord Botを起動しています...
+[INFO] discord.client: logging in using static token
+{client.user名} としてログインしました
+監視中のサイト: X件
