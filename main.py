@@ -68,13 +68,13 @@ def get_page_content(url, selector=None):
         return None
 
 def get_content_hash(content):
-    """コンテンツのハッシュ値を計算"""
+
     if content is None:
         return None
     return hashlib.md5(content.encode()).hexdigest()
 
 def get_diff(old_content, new_content, max_lines=20):
-    """2つのコンテンツの差分を取得"""
+
     if not old_content or not new_content:
         return None
     
@@ -128,7 +128,7 @@ def get_diff(old_content, new_content, max_lines=20):
 
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def check_websites():
-    """定期的に全てのウェブサイトをチェック"""
+
     channel = client.get_channel(CHANNEL_ID)
     if not channel:
         print("チャンネルが見つかりません")
@@ -220,16 +220,7 @@ async def on_message(message):
     elif message.content == '!help':
         await message.channel.send("たすけて～")
 
-# ★この部分を削除または変更
-# if __name__ == "__main__":
-#     client.run(DISCORD_TOKEN)
 
-## デプロイ後の確認
 
-再デプロイ後、Renderのログで以下が表示されるか確認してください：
-```
-Discord Botを起動しています...
-[INFO] discord.client: logging in using static token
-{client.user名} としてログインしました
-監視中のサイト: X件
+
 
