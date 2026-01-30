@@ -1,4 +1,4 @@
-discord.py
 requests
 beautifulsoup4
-flask
+Flask==3.0.0
+discord.py==2.4.0
