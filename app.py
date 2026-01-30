@@ -96,9 +96,11 @@ async def run_discord_with_retries():
                 retry_count += 1
                 wait_time = RETRY_DELAY * retry_count
                 print("=" * 50)
-                print(f"⚠️ レート制限エラー (試行 {retry_count}/{MAX_RETRIES})")
-                print("Discord側で一時的にブロックされています")
-                print(f"{wait_time}秒後に再試行します...")
+                now = int(time.time())
+                print(f"[{now}] ⚠️ レート制限エラー (試行 {retry_count}/{MAX_RETRIES})")
+                print(f"[{now}] {wait_time}秒後に再試行します...")
+                await asyncio.sleep(wait_time)
+                print(f"[{int(time.time())}] 再試行します")
                 print("=" * 50)
                 await asyncio.sleep(wait_time)
                 continue
@@ -140,3 +142,4 @@ if __name__ == "__main__":
 
     # Discordはメインスレッド（重要）
     asyncio.run(run_discord_with_retries())
+
