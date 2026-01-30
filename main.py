@@ -8,7 +8,7 @@ import os
 import json
 import traceback
 
-# 環境変数から設定を取得（Koyeb/Renderなど用）
+# 環境変数から設定を取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))
@@ -22,8 +22,7 @@ except json.JSONDecodeError:
     print("警告: MONITORED_SITESの解析に失敗しました。空のリストを使用します。")
     MONITORED_SITES = []
 
-# ローカル環境のフォールバック
-# app.py から import される前提のため、exit はしない
+# ローカル環境のフォールバック（app.pyからimportされる想定なのでexitしない）
 if not DISCORD_TOKEN or CHANNEL_ID == 0:
     try:
         from config import DISCORD_TOKEN, CHANNEL_ID, CHECK_INTERVAL, SHOW_DIFF, MONITORED_SITES
@@ -32,14 +31,14 @@ if not DISCORD_TOKEN or CHANNEL_ID == 0:
         print("エラー: 環境変数またはconfig.pyが必要です")
 
 # ------------------------------------------------------------
-# 重要: import時にClientを作らない（多重起動/再import事故を避ける）
-# app.py 側から /status で参照できるように、client はグローバルに保持する
+# 重要: import時にClientを作らない
+# app.pyの/statusから参照できるように client はグローバル保持
 # ------------------------------------------------------------
 client: discord.Client | None = None
 
 def create_client() -> discord.Client:
     intents = discord.Intents.default()
-    intents.message_content = True  # on_messageでコマンド読むなら必須
+    intents.message_content = True  # on_messageでコマンド読むなら必須（Portal側でもON必要）
     return discord.Client(intents=intents)
 
 def get_page_content(url, selector=None):
@@ -49,7 +48,6 @@ def get_page_content(url, selector=None):
         response.raise_for_status()
         soup = BeautifulSoup(response.content, "html.parser")
 
-        # 特定の要素のみ取得する場合
         if selector:
             element = soup.select_one(selector)
             if element:
@@ -60,9 +58,9 @@ def get_page_content(url, selector=None):
         else:
             content = soup.get_text(separator="\n", strip=True)
 
-        # 空白行を削除して整形
         lines = [line.strip() for line in content.split("\n") if line.strip()]
         return "\n".join(lines)
+
     except Exception as e:
         print(f"エラー ({url}): {e}")
         return None
@@ -122,17 +120,13 @@ def get_diff(old_content, new_content, max_lines=20):
     return diff_msg if diff_msg else None
 
 def bind_events(c: discord.Client):
-    """
-    Clientにイベント/タスクを紐付ける。
-    tasks.loop は client を引数で受ける形にして、
-    グローバル client 参照に依存しすぎないようにする。
-    """
+    """Clientにイベント/タスクを紐付ける"""
 
     @tasks.loop(seconds=CHECK_INTERVAL)
     async def check_websites():
         channel = c.get_channel(CHANNEL_ID)
         if not channel:
-            print("チャンネルが見つかりません（CHANNEL_IDが正しいか、Botがそのサーバーにいるか確認してください）")
+            print("チャンネルが見つかりません（CHANNEL_IDが正しいか、Botがそのサーバーにいるか確認）")
             return
 
         for site in MONITORED_SITES:
@@ -161,7 +155,7 @@ def bind_events(c: discord.Client):
                     site["hash"] = current_hash
                     site["content"] = current_content
 
-                    notification = f"{site.get('mention', '@everyone')}\n{site.get('message','(no message)')}\n{site.get('url','')}"
+                    notification = f"{site.get('mention', '@everyone')}\n{site.get('message', '(no message)')}\n{site.get('url', '')}"
 
                     if diff_msg:
                         notification += f"\n\n{diff_msg}"
@@ -183,10 +177,7 @@ def bind_events(c: discord.Client):
         print(f"チェック間隔: {CHECK_INTERVAL}秒")
         print(f"差分表示: {'有効' if SHOW_DIFF else '無効'}")
         for site in MONITORED_SITES:
-            try:
-                print(f"  - {site.get('name','(no name)')}: {site.get('url','')}")
-            except Exception:
-                pass
+            print(f"  - {site.get('name','(no name)')}: {site.get('url','')}")
 
         # 二重 start 防止
         if not check_websites.is_running():
@@ -197,7 +188,6 @@ def bind_events(c: discord.Client):
         if message.author == c.user:
             return
 
-        # !status
         if message.content == "!status":
             status_msg = "**📊 現在の監視状況:**\n"
             for i, site in enumerate(MONITORED_SITES, 1):
@@ -206,13 +196,11 @@ def bind_events(c: discord.Client):
             status_msg += f"\nチェック間隔: {CHECK_INTERVAL}秒"
             await message.channel.send(status_msg)
 
-        # !check
         elif message.content == "!check":
             await message.channel.send("🔍 手動チェックを開始します...")
             await check_websites()
             await message.channel.send("✅ チェック完了しました。")
 
-        # !commands
         elif message.content == "!commands":
             commands_msg = (
                 "**🤖 Bot コマンド一覧:**\n"
@@ -223,30 +211,36 @@ def bind_events(c: discord.Client):
             )
             await message.channel.send(commands_msg)
 
-        # !help
         elif message.content == "!help":
             await message.channel.send("たすけて～")
 
-    return check_websites
+async def reset_client():
+    """既存 client を閉じて破棄する（リトライ時に新規clientへ差し替えるため）"""
+    global client
+    if client is not None:
+        try:
+            await client.close()
+        except Exception:
+            pass
+    client = None
 
 async def start_bot():
     """
     app.py から呼ばれる起動関数。
-    client を作成し、イベントを紐付けて、Discordへ接続する。
+    429後の再試行などで Session is closed を避けるため、毎回 client を作り直す。
     """
     global client
 
     if not DISCORD_TOKEN:
         raise RuntimeError("DISCORD_TOKEN is not set")
 
-    # 既に作られていたら再利用（基本は一度だけの想定）
-    if client is None:
-        client = create_client()
-        bind_events(client)
+    # ★毎回作り直す：セッションが閉じている状態の再利用を避ける
+    client = create_client()
+    bind_events(client)
 
     await client.start(DISCORD_TOKEN)
 
-# 任意: 単体起動もできるようにする（ローカルデバッグ用）
+# ローカルデバッグ用（任意）
 if __name__ == "__main__":
     import asyncio
     asyncio.run(start_bot())
