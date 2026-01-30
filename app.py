@@ -7,15 +7,14 @@ import traceback
 import signal
 import sys
 
-import discord  # 429など例外クラス参照用
-
-import main  # main.start_bot() を呼ぶ想定（後述）
+import discord  # 例外クラス参照用
+import main
 
 app = Flask(__name__)
 
 # Bot起動状態を管理
 bot_running = False
-last_error = None
+last_error = ""
 start_time = time.time()
 
 MAX_RETRIES = 3
@@ -28,20 +27,21 @@ def home():
 
 @app.route("/health")
 def health():
-    # Render/Koyebのヘルスチェック用
+    """Renderのヘルスチェック用"""
     if bot_running:
         return "OK", 200
     return "Starting", 503
 
 @app.route("/status")
 def status():
+    """詳細ステータス"""
     client = getattr(main, "client", None)
     return {
         "bot_running": bot_running,
         "bot_user": str(client.user) if (client and client.user) else "Not logged in",
         "monitored_sites": len(getattr(main, "MONITORED_SITES", [])),
         "uptime_sec": int(time.time() - start_time),
-        "last_error": last_error or "",
+        "last_error": last_error,
     }, 200
 
 def run_flask():
@@ -49,13 +49,9 @@ def run_flask():
     app.run(host="0.0.0.0", port=port, debug=False)
 
 async def run_discord_with_retries():
-    """
-    Discord bot をメインスレッド（asyncio）で起動。
-    例外に応じてリトライする。
-    """
+    """Discord bot をメインスレッド（asyncio）で起動。例外に応じてリトライする。"""
     global bot_running, last_error
 
-    # 設定チェック
     if not main.DISCORD_TOKEN:
         last_error = "DISCORD_TOKEN is not set"
         bot_running = False
@@ -76,13 +72,19 @@ async def run_discord_with_retries():
             print(f"監視サイト数: {len(main.MONITORED_SITES)}")
             print("=" * 50)
 
-            bot_running = True
-            last_error = None
+            # ★2回目以降は前回セッションを確実に捨てる（Session is closed 対策）
+            if retry_count > 0:
+                try:
+                    await main.reset_client()
+                except Exception:
+                    pass
 
-            # ★重要: main.start_bot() は内部で client を作成し、await client.start(token) する想定
+            bot_running = True
+            last_error = ""
+
             await main.start_bot()
 
-            # start_bot() が正常終了することは通常ない（切断時などに戻る）
+            # 通常ここには来ない（切断などで start_bot が戻った場合）
             bot_running = False
             last_error = "Discord client stopped unexpectedly"
             return
@@ -90,12 +92,12 @@ async def run_discord_with_retries():
         except discord.errors.HTTPException as e:
             bot_running = False
             last_error = f"HTTPException: status={getattr(e, 'status', None)} {e}"
-            # 429（レート制限）だけは待って再試行
             if getattr(e, "status", None) == 429:
                 retry_count += 1
                 wait_time = RETRY_DELAY * retry_count
                 print("=" * 50)
                 print(f"⚠️ レート制限エラー (試行 {retry_count}/{MAX_RETRIES})")
+                print("Discord側で一時的にブロックされています")
                 print(f"{wait_time}秒後に再試行します...")
                 print("=" * 50)
                 await asyncio.sleep(wait_time)
@@ -104,6 +106,13 @@ async def run_discord_with_retries():
                 print(f"Discord HTTPエラー: {e}")
                 traceback.print_exc()
                 return
+
+        except discord.LoginFailure as e:
+            bot_running = False
+            last_error = f"LoginFailure: {e}"
+            print("ログイン失敗: DISCORD_TOKENが正しいか確認してください")
+            traceback.print_exc()
+            return
 
         except Exception as e:
             bot_running = False
@@ -114,7 +123,6 @@ async def run_discord_with_retries():
 
 def signal_handler(sig, frame):
     print("シャットダウンシグナルを受信しました")
-    # ここで無理に close までやるとループ都合で面倒なので、プロセス終了でOKにする
     sys.exit(0)
 
 if __name__ == "__main__":
