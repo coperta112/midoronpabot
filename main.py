@@ -123,7 +123,7 @@ def bind_events(c: discord.Client):
                             f"{item['link']}"
                         )
 
-                        await channel.send(notification)
+                        await message.reply(notification)
 
                 except Exception as e:
                     print(f"フィードチェック中にエラー ({feed['name']}): {e}")
@@ -171,12 +171,12 @@ def bind_events(c: discord.Client):
                 status = "✅ 監視中" if feed["last_item_id"] else "⏳ 初期化中"
                 status_msg += f"{i}. {feed['name']}: {status}\n"
             status_msg += f"\nチェック間隔: {CHECK_INTERVAL}秒"
-            await message.channel.send(status_msg)
+            await message.message.reply(status_msg)
 
         elif message.content == "!check":
-            await message.channel.send("🔍 手動チェックを開始します...")
+            await message.message.reply("🔍 手動チェックを開始します...")
             await check_feeds()
-            await message.channel.send("✅ チェック完了しました。")
+            await message.message.reply("✅ チェック完了しました。")
 
         elif message.content == "!commands":
             commands_msg = (
@@ -187,44 +187,44 @@ def bind_events(c: discord.Client):
                 "`!help` - ヘルプメッセージを表示\n"
                 "`!roll NdM` - ダイスロール (例: `!roll 2d6`)"
             )
-            await message.channel.send(commands_msg)
+            await message.message.reply(commands_msg)
 
         elif message.content == "!help":
-            await message.channel.send("たすけて～")
+            await message.message.reply("たすけて～")
 
         elif message.content.startswith("!roll"):
             content = message.content[len("!roll"):].strip()
             m = re.match(r"^(\d+)\s*d\s*(\d+)$", content)
             if not m:
-                await message.channel.send("使い方: `!roll NdM` 例: `!roll 1d100`")
+                await message.message.reply("使い方: `!roll NdM` 例: `!roll 1d100`")
                 return
 
             try:
                 n = int(m.group(1))
                 sides = int(m.group(2))
             except Exception:
-                await message.channel.send("数値の解析に失敗しました。")
+                await message.message.reply("数値の解析に失敗しました。")
                 return
 
             if n <= 0 or sides <= 0:
-                await message.channel.send("回数と面数は正の整数で指定してください。")
+                await message.message.reply("回数と面数は正の整数で指定してください。")
                 return
             if n > 100:
-                await message.channel.send("最大100個まで指定できます。")
+                await message.message.reply("最大100個まで指定できます。")
                 return
             if sides > 1000000:
-                await message.channel.send("面数は最大1,000,000まで指定できます。")
+                await message.message.reply("面数は最大1,000,000まで指定できます。")
                 return
 
             rolls = [random.randint(1, sides) for _ in range(n)]
             total = sum(rolls)
             if n == 1:
-                await message.channel.send(f"🎲 出目: {rolls[0]}")
+                await message.message.reply(f"🎲 出目: {rolls[0]}")
             else:
                 rolls_str = ", ".join(str(r) for r in rolls)
                 if len(rolls_str) > 1500:
                     rolls_str = rolls_str[:1500] + "..."
-                await message.channel.send(f"🎲 出目: [{rolls_str}]\n合計: {total}")
+                await message.message.reply(f"🎲 出目: [{rolls_str}]\n合計: {total}")
 
 async def reset_client():
     global client
