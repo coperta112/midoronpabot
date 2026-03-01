@@ -11,6 +11,8 @@ import re
 import random
 import time
 import asyncio
+from dotenv import load_dotenv
+load_dotenv()
 
 # 環境変数から設定を取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
