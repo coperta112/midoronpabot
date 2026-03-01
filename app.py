@@ -39,7 +39,7 @@ def status():
     return {
         "bot_running": bot_running,
         "bot_user": str(client.user) if (client and client.user) else "Not logged in",
-        "monitored_sites": len(getattr(main, "MONITORED_SITES", [])),
+        "monitored_feeds": len(getattr(main, "MONITORED_FEEDS", [])),
         "uptime_sec": int(time.time() - start_time),
         "last_error": last_error,
     }, 200
@@ -69,7 +69,7 @@ async def run_discord_with_retries():
             print(f"Discord Botを起動しています... (試行 {retry_count + 1}/{MAX_RETRIES})")
             print(f"DISCORD_TOKEN設定: {'あり' if main.DISCORD_TOKEN else 'なし'}")
             print(f"CHANNEL_ID: {main.CHANNEL_ID}")
-            print(f"監視サイト数: {len(main.MONITORED_SITES)}")
+            print(f"監視サイト数: {len(main.MONITORED_FEEDS)}")
             print("=" * 50)
 
             # ★2回目以降は前回セッションを確実に捨てる（Session is closed 対策）
