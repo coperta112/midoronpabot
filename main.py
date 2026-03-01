@@ -7,6 +7,10 @@ import difflib
 import os
 import json
 import traceback
+import re
+import random
+import time
+import asyncio
 
 # 環境変数から設定を取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -41,10 +45,20 @@ def create_client() -> discord.Client:
     intents.message_content = True  # on_messageでコマンド読むなら必須（Portal側でもON必要）
     return discord.Client(intents=intents)
 
-def get_page_content(url, selector=None):
-    """ウェブページのコンテンツを取得"""
+def get_page_content(url, selector=None, cache_bust=True, timeout=10):
+    """ウェブページのコンテンツを取得し、(content, etag, last_modified) を返す。"""
     try:
-        response = requests.get(url, timeout=10)
+        headers = {
+            "User-Agent": "midoronpabot/1.0",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+        req_url = url
+        if cache_bust:
+            sep = "&" if "?" in url else "?"
+            req_url = f"{url}{sep}_={int(time.time())}"
+
+        response = requests.get(req_url, headers=headers, timeout=timeout)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, "html.parser")
 
@@ -59,16 +73,24 @@ def get_page_content(url, selector=None):
             content = soup.get_text(separator="\n", strip=True)
 
         lines = [line.strip() for line in content.split("\n") if line.strip()]
-        return "\n".join(lines)
+        etag = response.headers.get("ETag")
+        last_mod = response.headers.get("Last-Modified")
+        return "\n".join(lines), etag, last_mod
 
     except Exception as e:
         print(f"エラー ({url}): {e}")
-        return None
+        traceback.print_exc()
+        return None, None, None
 
-def get_content_hash(content):
+def get_content_hash(content, etag=None, last_mod=None):
     if content is None:
         return None
-    return hashlib.md5(content.encode()).hexdigest()
+    base = content
+    if etag:
+        base += f"\nETag:{etag}"
+    if last_mod:
+        base += f"\nLast-Modified:{last_mod}"
+    return hashlib.md5(base.encode()).hexdigest()
 
 def get_diff(old_content, new_content, max_lines=20):
     if not old_content or not new_content:
@@ -124,51 +146,84 @@ def bind_events(c: discord.Client):
 
     @tasks.loop(seconds=CHECK_INTERVAL)
     async def check_websites():
-        channel = c.get_channel(CHANNEL_ID)
-        if not channel:
-            print("チャンネルが見つかりません（CHANNEL_IDが正しいか、Botがそのサーバーにいるか確認）")
+        try:
+            channel = c.get_channel(CHANNEL_ID)
+            if not channel:
+                print("チャンネルが見つかりません（CHANNEL_IDが正しいか、Botがそのサーバーにいるか確認）")
+                return
+
+            for site in MONITORED_SITES:
+                try:
+                    current_content, etag, last_mod = get_page_content(site["url"], site.get("selector"))
+                    if current_content is None:
+                        continue
+
+                    current_hash = get_content_hash(current_content, etag, last_mod)
+
+                    # 初回実行時
+                    if "hash" not in site or site["hash"] is None:
+                        site["hash"] = current_hash
+                        site["content"] = current_content
+                        site["etag"] = etag
+                        site["last_modified"] = last_mod
+                        print(f"初回チェック完了: {site.get('name', '(no name)')}")
+                        continue
+
+                    # 更新を検知
+                    if current_hash != site.get("hash"):
+                        print(f"更新を検知: {site.get('name', '(no name)')}")
+
+                        diff_msg = None
+                        if SHOW_DIFF and site.get("content"):
+                            diff_msg = get_diff(site.get("content"), current_content)
+
+                        site["hash"] = current_hash
+                        site["content"] = current_content
+                        site["etag"] = etag
+                        site["last_modified"] = last_mod
+
+                        notification = f"{site.get('mention', '@everyone')}\n{site.get('message', '(no message)')}\n{site.get('url', '')}"
+
+                        if diff_msg:
+                            notification += f"\n\n{diff_msg}"
+
+                        # Discordのメッセージ長制限（2000文字）を考慮
+                        if len(notification) > 2000:
+                            notification = notification[:1900] + "\n\n... (差分が長すぎるため省略されました)"
+
+                        try:
+                            await channel.send(notification)
+                        except Exception:
+                            print("通知送信でエラーが発生しました")
+                            traceback.print_exc()
+
+                except Exception as e:
+                    print(f"サイトチェック中にエラー ({site.get('url')}): {e}")
+                    traceback.print_exc()
+                    # サイト単位のエラーは無視して次へ
+                    continue
+
+        except Exception as e:
+            print(f"check_websites 全体でエラー: {e}")
+            traceback.print_exc()
+            # 例外を外へ出さずにループ継続させる
             return
 
-        for site in MONITORED_SITES:
+    async def _ensure_check_websites_running():
+        await c.wait_until_ready()
+        while not c.is_closed():
             try:
-                current_content = get_page_content(site["url"], site.get("selector"))
-                if current_content is None:
-                    continue
-
-                current_hash = get_content_hash(current_content)
-
-                # 初回実行時
-                if "hash" not in site or site["hash"] is None:
-                    site["hash"] = current_hash
-                    site["content"] = current_content
-                    print(f"初回チェック完了: {site.get('name', '(no name)')}")
-                    continue
-
-                # 更新を検知
-                if current_hash != site["hash"]:
-                    print(f"更新を検知: {site.get('name', '(no name)')}")
-
-                    diff_msg = None
-                    if SHOW_DIFF and site.get("content"):
-                        diff_msg = get_diff(site.get("content"), current_content)
-
-                    site["hash"] = current_hash
-                    site["content"] = current_content
-
-                    notification = f"{site.get('mention', '@everyone')}\n{site.get('message', '(no message)')}\n{site.get('url', '')}"
-
-                    if diff_msg:
-                        notification += f"\n\n{diff_msg}"
-
-                    # Discordのメッセージ長制限（2000文字）を考慮
-                    if len(notification) > 2000:
-                        notification = notification[:1900] + "\n\n... (差分が長すぎるため省略されました)"
-
-                    await channel.send(notification)
-
+                if not check_websites.is_running():
+                    try:
+                        check_websites.start()
+                        print("check_websites を再起動しました")
+                    except RuntimeError:
+                        # 既に開始済みの競合などは無視
+                        pass
             except Exception as e:
-                print(f"check_websites 内でエラー: {e}")
+                print(f"ウォッチドッグでエラー: {e}")
                 traceback.print_exc()
+            await asyncio.sleep(10)
 
     @c.event
     async def on_ready():
@@ -182,6 +237,11 @@ def bind_events(c: discord.Client):
         # 二重 start 防止
         if not check_websites.is_running():
             check_websites.start()
+        # ウォッチドッグ起動
+        try:
+            c.loop.create_task(_ensure_check_websites_running())
+        except Exception:
+            pass
 
     @c.event
     async def on_message(message):
@@ -213,6 +273,45 @@ def bind_events(c: discord.Client):
 
         elif message.content == "!help":
             await message.channel.send("たすけて～")
+        
+        # !roll コマンド: 形式は "!roll <N>d<M>" または "!roll <N> d <M>" を許容
+        # 例: !roll 3d6, !roll 2 d 20
+        elif message.content.startswith("!roll"):
+            content = message.content[len("!roll"):].strip()
+            m = re.match(r"^(\d+)\s*d\s*(\d+)$", content)
+            if not m:
+                await message.channel.send("使い方: `!roll NdM` 例: `!roll 1d100` あるいは `!roll 1 d 100`")
+                return
+
+            try:
+                n = int(m.group(1))
+                sides = int(m.group(2))
+            except Exception:
+                await message.channel.send("数値の解析に失敗しました。正しい形式で指定してください。")
+                return
+
+            # 安全策: 回数・面数に上限を設ける
+            if n <= 0 or sides <= 0:
+                await message.channel.send("回数と面数は正の整数で指定してください。")
+                return
+            if n > 100:
+                await message.channel.send("過度な回数です。最大100個まで指定できます。")
+                return
+            if sides > 1000000:
+                await message.channel.send("過度な面数です。面数は最大1,000,000まで指定できます。")
+                return
+
+            rolls = [random.randint(1, sides) for _ in range(n)]
+            total = sum(rolls)
+            # 結果表示: 個別の出目と合計
+            if n == 1:
+                await message.channel.send(f"🎲 出目: {rolls[0]}")
+            else:
+                # 出力が長くなりすぎないように制限
+                rolls_str = ", ".join(str(r) for r in rolls)
+                if len(rolls_str) > 1500:
+                    rolls_str = rolls_str[:1500] + "..."
+                await message.channel.send(f"🎲 出目: [{rolls_str}]\n合計: {total}")
 
 async def reset_client():
     """既存 client を閉じて破棄する（リトライ時に新規clientへ差し替えるため）"""
