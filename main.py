@@ -7,46 +7,72 @@ import os
 import re
 import random
 import asyncio
+import json
+import traceback
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
+# =========================
 # 環境変数
+# =========================
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))
 
+# JSON文字列から監視対象を取得
+MONITORED_SITES_JSON = os.getenv("MONITORED_SITES", "[]")
+
+try:
+    MONITORED_SITES = json.loads(MONITORED_SITES_JSON)
+except Exception as e:
+    print("MONITORED_SITES の読み込みに失敗しました")
+    print(e)
+    MONITORED_SITES = []
+
+# =========================
 # フォールバック
+# =========================
+
 if not DISCORD_TOKEN or CHANNEL_ID == 0:
     try:
-        from config import DISCORD_TOKEN, CHANNEL_ID, CHECK_INTERVAL
+        from config import (
+            DISCORD_TOKEN,
+            CHANNEL_ID,
+            CHECK_INTERVAL,
+            MONITORED_SITES
+        )
+
         print("config.py を読み込みました")
+
     except ImportError:
         print("エラー: 環境変数またはconfig.pyが必要です")
-
-# 監視対象
-MONITORED_SITES = [
-    {
-        "name": "Wiki更新",
-        "url": "https://seesaawiki.jp/midorikun/d/%a4%df%a4%c9%a4%ed%a4%f3%a4%d1",
-        "mention": "@everyone",
-        "message": "📄 Wikiが更新されました！",
-        "last_hash": None,
-    }
-]
 
 client: discord.Client | None = None
 
 
+# =========================
+# Discord Client
+# =========================
+
 def create_client() -> discord.Client:
+
     intents = discord.Intents.default()
     intents.message_content = True
+
     return discord.Client(intents=intents)
 
 
-def get_page_hash(url):
-    """ページ内容のハッシュを取得"""
+# =========================
+# Web監視
+# =========================
+
+def get_page_hash(url: str):
+
     try:
+
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 "
@@ -57,73 +83,153 @@ def get_page_hash(url):
             )
         }
 
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=15
+        )
+
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
 
-        # 不要要素削除
+        # script/style除外
         for tag in soup(["script", "style"]):
             tag.decompose()
 
-        text = soup.get_text(separator="\n", strip=True)
+        text = soup.get_text(
+            separator="\n",
+            strip=True
+        )
 
-        # ハッシュ化
-        return hashlib.md5(text.encode("utf-8")).hexdigest()
+        return hashlib.md5(
+            text.encode("utf-8")
+        ).hexdigest()
 
     except Exception as e:
-        print(f"ページ取得エラー ({url}): {e}")
+
+        print(f"ページ取得エラー ({url})")
+        print(e)
+
         return None
 
+
+# =========================
+# イベント登録
+# =========================
 
 def bind_events(c: discord.Client):
 
     @tasks.loop(seconds=CHECK_INTERVAL)
     async def check_sites():
-        channel = c.get_channel(CHANNEL_ID)
 
-        if not channel:
-            print("チャンネルが見つかりません")
-            return
+        try:
 
-        for site in MONITORED_SITES:
+            channel = c.get_channel(CHANNEL_ID)
 
-            current_hash = get_page_hash(site["url"])
+            if not channel:
+                print("チャンネルが見つかりません")
+                return
 
-            if current_hash is None:
-                continue
+            for site in MONITORED_SITES:
 
-            # 初回
-            if site["last_hash"] is None:
-                site["last_hash"] = current_hash
-                print(f"初回チェック完了: {site['name']}")
-                continue
+                try:
 
-            # 更新検知
-            if current_hash != site["last_hash"]:
-                print(f"更新検知: {site['name']}")
+                    current_hash = get_page_hash(
+                        site["url"]
+                    )
 
-                site["last_hash"] = current_hash
+                    if current_hash is None:
+                        continue
 
-                notification = (
-                    f"{site['mention']}\n"
-                    f"{site['message']}\n"
-                    f"{site['url']}"
-                )
+                    # 初回
+                    if site.get("last_hash") is None:
 
-                await channel.send(notification)
+                        site["last_hash"] = current_hash
+
+                        print(
+                            f"初回チェック完了: {site['name']}"
+                        )
+
+                        continue
+
+                    # 更新検知
+                    if current_hash != site["last_hash"]:
+
+                        print(
+                            f"更新検知: {site['name']}"
+                        )
+
+                        site["last_hash"] = current_hash
+
+                        notification = (
+                            f"{site.get('mention', '@everyone')}\n"
+                            f"{site.get('message', '更新を検知しました')}\n"
+                            f"{site['url']}"
+                        )
+
+                        await channel.send(notification)
+
+                except Exception as e:
+
+                    print(
+                        f"監視エラー ({site.get('name', 'unknown')})"
+                    )
+
+                    traceback.print_exc()
+
+        except Exception as e:
+
+            print("check_sites 全体エラー")
+            traceback.print_exc()
+
+    async def watchdog():
+
+        await c.wait_until_ready()
+
+        while not c.is_closed():
+
+            try:
+
+                if not check_sites.is_running():
+
+                    print(
+                        "check_sites が停止していたため再起動します"
+                    )
+
+                    check_sites.start()
+
+            except Exception:
+                traceback.print_exc()
+
+            await asyncio.sleep(30)
 
     @c.event
     async def on_ready():
+
         print(f"{c.user} としてログインしました")
-        print(f"監視サイト数: {len(MONITORED_SITES)}")
-        print(f"チェック間隔: {CHECK_INTERVAL}秒")
+
+        print(
+            f"監視サイト数: {len(MONITORED_SITES)}"
+        )
+
+        print(
+            f"チェック間隔: {CHECK_INTERVAL}秒"
+        )
 
         for site in MONITORED_SITES:
-            print(f" - {site['name']}: {site['url']}")
+
+            print(
+                f" - {site['name']}: {site['url']}"
+            )
 
         if not check_sites.is_running():
             check_sites.start()
+
+        c.loop.create_task(watchdog())
 
     @c.event
     async def on_message(message):
@@ -131,15 +237,24 @@ def bind_events(c: discord.Client):
         if message.author == c.user:
             return
 
+        # =========================
+        # !status
+        # =========================
+
         if message.content == "!status":
 
-            status_msg = "**📊 現在の監視状況:**\n"
+            status_msg = (
+                "**📊 現在の監視状況:**\n"
+            )
 
-            for i, site in enumerate(MONITORED_SITES, 1):
+            for i, site in enumerate(
+                MONITORED_SITES,
+                1
+            ):
 
                 status = (
                     "✅ 監視中"
-                    if site["last_hash"]
+                    if site.get("last_hash")
                     else "⏳ 初期化中"
                 )
 
@@ -148,10 +263,15 @@ def bind_events(c: discord.Client):
                 )
 
             status_msg += (
-                f"\nチェック間隔: {CHECK_INTERVAL}秒"
+                f"\nチェック間隔: "
+                f"{CHECK_INTERVAL}秒"
             )
 
             await message.reply(status_msg)
+
+        # =========================
+        # !check
+        # =========================
 
         elif message.content == "!check":
 
@@ -164,6 +284,10 @@ def bind_events(c: discord.Client):
             await message.reply(
                 "✅ チェック完了しました。"
             )
+
+        # =========================
+        # !commands
+        # =========================
 
         elif message.content == "!commands":
 
@@ -180,36 +304,53 @@ def bind_events(c: discord.Client):
             await message.reply(commands_msg)
 
         elif message.content == "!help":
+
             await message.reply("たすけて～")
 
         elif message.content == "!kutabare":
+
             await message.reply("ぐえ～")
+
+        # =========================
+        # ダイス
+        # =========================
 
         elif message.content.startswith("!roll"):
 
-            content = message.content[len("!roll"):].strip()
+            content = (
+                message.content[len("!roll"):].strip()
+            )
 
-            m = re.match(r"^(\d+)\s*d\s*(\d+)$", content)
+            m = re.match(
+                r"^(\d+)\s*d\s*(\d+)$",
+                content
+            )
 
             if not m:
+
                 await message.reply(
                     "使い方: `!roll NdM`"
                 )
+
                 return
 
             n = int(m.group(1))
             sides = int(m.group(2))
 
             if n <= 0 or sides <= 0:
+
                 await message.reply(
                     "正の整数を指定してください"
                 )
+
                 return
 
             if n > 100:
+
                 await message.reply(
                     "最大100個まで"
                 )
+
                 return
 
             rolls = [
@@ -220,11 +361,16 @@ def bind_events(c: discord.Client):
             total = sum(rolls)
 
             if n == 1:
+
                 await message.reply(
                     f"🎲 出目: {rolls[0]}"
                 )
+
             else:
-                rolls_str = ", ".join(map(str, rolls))
+
+                rolls_str = ", ".join(
+                    map(str, rolls)
+                )
 
                 await message.reply(
                     f"🎲 出目: [{rolls_str}]\n"
@@ -232,11 +378,16 @@ def bind_events(c: discord.Client):
                 )
 
 
+# =========================
+# 起動
+# =========================
+
 async def start_bot():
 
     global client
 
     if not DISCORD_TOKEN:
+
         raise RuntimeError(
             "DISCORD_TOKEN is not set"
         )
@@ -249,4 +400,5 @@ async def start_bot():
 
 
 if __name__ == "__main__":
+
     asyncio.run(start_bot())
