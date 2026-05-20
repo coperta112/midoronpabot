@@ -185,12 +185,16 @@ def bind_events(c: discord.Client):
                 "`!check` - 手動で即座にチェックを実行\n"
                 "`!commands` - このコマンド一覧を表示\n"
                 "`!help` - ヘルプメッセージを表示\n"
+                "`!kutabare` - ぐえ～\n"
                 "`!roll NdM` - ダイスロール (例: `!roll 2d6`)"
             )
             await message.reply(commands_msg)
 
         elif message.content == "!help":
             await message.reply("たすけて～")
+
+        elif message.content == "!kutabare":
+            await message.reply("ぐえ～")
 
         elif message.content.startswith("!roll"):
             content = message.content[len("!roll"):].strip()
