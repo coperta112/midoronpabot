@@ -9,6 +9,7 @@ import random
 import asyncio
 import json
 import traceback
+import cloudscraper
 
 from dotenv import load_dotenv
 
@@ -87,9 +88,15 @@ def get_page_hash(url):
             "Connection": "keep-alive",
         }
 
-        session = requests.Session()
+        scraper = cloudscraper.create_scraper(
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "mobile": False
+            }
+        )
 
-        response = session.get(
+        response = scraper.get(
             url,
             headers=headers,
             timeout=20,
