@@ -69,51 +69,49 @@ def create_client() -> discord.Client:
 # Web監視
 # =========================
 
-def get_page_hash(url: str):
-
+def get_page_hash(url):
+    """ページ内容のハッシュを取得"""
     try:
-
         headers = {
             "User-Agent": (
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/120.0 Safari/537.36"
-            )
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Referer": "https://www.google.com/",
+            "Connection": "keep-alive",
         }
 
-        response = requests.get(
+        session = requests.Session()
+
+        response = session.get(
             url,
             headers=headers,
-            timeout=15
+            timeout=20,
+            allow_redirects=True,
         )
 
         response.raise_for_status()
 
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        # script/style除外
         for tag in soup(["script", "style"]):
             tag.decompose()
 
-        text = soup.get_text(
-            separator="\n",
-            strip=True
-        )
+        text = soup.get_text(separator="\n", strip=True)
 
         return hashlib.md5(
             text.encode("utf-8")
         ).hexdigest()
 
     except Exception as e:
-
         print(f"ページ取得エラー ({url})")
         print(e)
-
         return None
 
 
