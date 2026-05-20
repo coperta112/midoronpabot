@@ -1,15 +1,14 @@
 import discord
 from discord.ext import tasks
-import requests
-from bs4 import BeautifulSoup
-import hashlib
+
 import os
 import re
 import random
 import asyncio
 import json
 import traceback
-import cloudscraper
+
+import feedparser
 
 from dotenv import load_dotenv
 
@@ -20,36 +19,33 @@ load_dotenv()
 # =========================
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))
 
-# JSON文字列から監視対象を取得
-MONITORED_SITES_JSON = os.getenv("MONITORED_SITES", "[]")
+CHANNEL_ID = int(
+    os.getenv("CHANNEL_ID", 0)
+)
+
+CHECK_INTERVAL = int(
+    os.getenv("CHECK_INTERVAL", 300)
+)
+
+MONITORED_SITES_JSON = os.getenv(
+    "MONITORED_SITES",
+    "[]"
+)
 
 try:
-    MONITORED_SITES = json.loads(MONITORED_SITES_JSON)
+
+    MONITORED_SITES = json.loads(
+        MONITORED_SITES_JSON
+    )
+
 except Exception as e:
-    print("MONITORED_SITES の読み込みに失敗しました")
+
+    print("MONITORED_SITES 読み込み失敗")
+
     print(e)
+
     MONITORED_SITES = []
-
-# =========================
-# フォールバック
-# =========================
-
-if not DISCORD_TOKEN or CHANNEL_ID == 0:
-    try:
-        from config import (
-            DISCORD_TOKEN,
-            CHANNEL_ID,
-            CHECK_INTERVAL,
-            MONITORED_SITES
-        )
-
-        print("config.py を読み込みました")
-
-    except ImportError:
-        print("エラー: 環境変数またはconfig.pyが必要です")
 
 client: discord.Client | None = None
 
@@ -61,73 +57,62 @@ client: discord.Client | None = None
 def create_client() -> discord.Client:
 
     intents = discord.Intents.default()
+
     intents.message_content = True
 
-    return discord.Client(intents=intents)
+    return discord.Client(
+        intents=intents
+    )
 
 
 # =========================
-# Web監視
+# RSS取得
 # =========================
 
-def get_page_hash(url):
-    """ページ内容のハッシュを取得"""
+def get_latest_feed(feed_url):
 
     try:
 
-        scraper = cloudscraper.create_scraper(
-            browser={
-                "browser": "chrome",
-                "platform": "windows",
-                "mobile": False
-            }
-        )
+        feed = feedparser.parse(feed_url)
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
+        if not feed.entries:
+
+            return None
+
+        entry = feed.entries[0]
+
+        return {
+            "id": entry.get(
+                "id",
+                entry.get("link")
             ),
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Referer": "https://www.google.com/"
+
+            "title": entry.get(
+                "title",
+                "No Title"
+            ),
+
+            "link": entry.get(
+                "link",
+                ""
+            ),
+
+            "published": entry.get(
+                "published",
+                "日時不明"
+            )
         }
-
-        response = scraper.get(
-            url,
-            headers=headers,
-            timeout=30
-        )
-
-        print(f"HTTP STATUS: {response.status_code}")
-
-        response.raise_for_status()
-
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
-
-        for tag in soup(
-            ["script", "style"]
-        ):
-            tag.decompose()
-
-        text = soup.get_text(
-            separator="\n",
-            strip=True
-        )
-
-        return hashlib.md5(
-            text.encode("utf-8")
-        ).hexdigest()
 
     except Exception as e:
 
-        print(f"ページ取得エラー ({url})")
+        print(
+            f"RSS取得エラー: {feed_url}"
+        )
+
         print(e)
 
         return None
+
 
 # =========================
 # イベント登録
@@ -140,108 +125,124 @@ def bind_events(c: discord.Client):
 
         try:
 
-            channel = c.get_channel(CHANNEL_ID)
+            channel = c.get_channel(
+                CHANNEL_ID
+            )
 
             if not channel:
-                print("チャンネルが見つかりません")
+
+                print(
+                    "チャンネルが見つかりません"
+                )
+
                 return
 
             for site in MONITORED_SITES:
 
                 try:
 
-                    current_hash = get_page_hash(
+                    latest = get_latest_feed(
                         site["url"]
                     )
 
-                    if current_hash is None:
+                    if latest is None:
                         continue
 
+                    latest_id = latest["id"]
+
+                    latest_title = latest["title"]
+
+                    latest_link = latest["link"]
+
+                    latest_published = (
+                        latest["published"]
+                    )
+
+                    # =========================
                     # 初回
-                    if site.get("last_hash") is None:
+                    # =========================
 
-                        site["last_hash"] = current_hash
+                    if site.get("last_id") is None:
+
+                        site["last_id"] = latest_id
 
                         print(
-                            f"初回チェック完了: {site['name']}"
+                            f"初回チェック完了: "
+                            f"{site['name']}"
                         )
 
                         continue
 
+                    # =========================
                     # 更新検知
-                    if current_hash != site["last_hash"]:
+                    # =========================
+
+                    if latest_id != site["last_id"]:
 
                         print(
-                            f"更新検知: {site['name']}"
+                            f"更新検知: "
+                            f"{site['name']}"
                         )
 
-                        site["last_hash"] = current_hash
+                        site["last_id"] = latest_id
 
                         notification = (
-                            f"{site.get('mention', '@everyone')}\n"
-                            f"{site.get('message', '更新を検知しました')}\n"
-                            f"{site['url']}"
+                            f"{site.get('mention', '@everyone')}\n\n"
+                            f"📄 **{latest_title}** "
+                            f"が更新されました\n\n"
+                            f"🕒 更新日時: "
+                            f"{latest_published}\n"
+                            f"🔗 {latest_link}"
                         )
 
-                        await channel.send(notification)
+                        await channel.send(
+                            notification
+                        )
 
-                except Exception as e:
+                except Exception:
 
                     print(
-                        f"監視エラー ({site.get('name', 'unknown')})"
+                        f"監視エラー: "
+                        f"{site.get('name')}"
                     )
 
                     traceback.print_exc()
 
-        except Exception as e:
+        except Exception:
 
-            print("check_sites 全体エラー")
+            print(
+                "check_sites 全体エラー"
+            )
+
             traceback.print_exc()
-
-    async def watchdog():
-
-        await c.wait_until_ready()
-
-        while not c.is_closed():
-
-            try:
-
-                if not check_sites.is_running():
-
-                    print(
-                        "check_sites が停止していたため再起動します"
-                    )
-
-                    check_sites.start()
-
-            except Exception:
-                traceback.print_exc()
-
-            await asyncio.sleep(30)
 
     @c.event
     async def on_ready():
 
-        print(f"{c.user} としてログインしました")
-
         print(
-            f"監視サイト数: {len(MONITORED_SITES)}"
+            f"{c.user} としてログインしました"
         )
 
         print(
-            f"チェック間隔: {CHECK_INTERVAL}秒"
+            f"監視サイト数: "
+            f"{len(MONITORED_SITES)}"
+        )
+
+        print(
+            f"チェック間隔: "
+            f"{CHECK_INTERVAL}秒"
         )
 
         for site in MONITORED_SITES:
 
             print(
-                f" - {site['name']}: {site['url']}"
+                f" - {site['name']}: "
+                f"{site['url']}"
             )
 
         if not check_sites.is_running():
-            check_sites.start()
 
-        c.loop.create_task(watchdog())
+            check_sites.start()
 
     @c.event
     async def on_message(message):
@@ -266,12 +267,14 @@ def bind_events(c: discord.Client):
 
                 status = (
                     "✅ 監視中"
-                    if site.get("last_hash")
+                    if site.get("last_id")
                     else "⏳ 初期化中"
                 )
 
                 status_msg += (
-                    f"{i}. {site['name']}: {status}\n"
+                    f"{i}. "
+                    f"{site['name']}: "
+                    f"{status}\n"
                 )
 
             status_msg += (
@@ -279,7 +282,9 @@ def bind_events(c: discord.Client):
                 f"{CHECK_INTERVAL}秒"
             )
 
-            await message.reply(status_msg)
+            await message.reply(
+                status_msg
+            )
 
         # =========================
         # !check
@@ -288,106 +293,14 @@ def bind_events(c: discord.Client):
         elif message.content == "!check":
 
             await message.reply(
-                "🔍 手動チェックを開始します..."
+                "🔍 手動チェック中..."
             )
 
             await check_sites()
 
             await message.reply(
-                "✅ チェック完了しました。"
+                "✅ チェック完了"
             )
-
-        # =========================
-        # !commands
-        # =========================
-
-        elif message.content == "!commands":
-
-            commands_msg = (
-                "**🤖 Bot コマンド一覧:**\n"
-                "`!status` - 現在の監視状況\n"
-                "`!check` - 手動チェック\n"
-                "`!commands` - コマンド一覧\n"
-                "`!help` - ヘルプ\n"
-                "`!kutabare` - ぐえ～\n"
-                "`!roll NdM` - ダイス"
-            )
-
-            await message.reply(commands_msg)
-
-        elif message.content == "!help":
-
-            await message.reply("たすけて～")
-
-        elif message.content == "!kutabare":
-
-            await message.reply("ぐえ～")
-
-        # =========================
-        # ダイス
-        # =========================
-
-        elif message.content.startswith("!roll"):
-
-            content = (
-                message.content[len("!roll"):].strip()
-            )
-
-            m = re.match(
-                r"^(\d+)\s*d\s*(\d+)$",
-                content
-            )
-
-            if not m:
-
-                await message.reply(
-                    "使い方: `!roll NdM`"
-                )
-
-                return
-
-            n = int(m.group(1))
-            sides = int(m.group(2))
-
-            if n <= 0 or sides <= 0:
-
-                await message.reply(
-                    "正の整数を指定してください"
-                )
-
-                return
-
-            if n > 100:
-
-                await message.reply(
-                    "最大100個まで"
-                )
-
-                return
-
-            rolls = [
-                random.randint(1, sides)
-                for _ in range(n)
-            ]
-
-            total = sum(rolls)
-
-            if n == 1:
-
-                await message.reply(
-                    f"🎲 出目: {rolls[0]}"
-                )
-
-            else:
-
-                rolls_str = ", ".join(
-                    map(str, rolls)
-                )
-
-                await message.reply(
-                    f"🎲 出目: [{rolls_str}]\n"
-                    f"合計: {total}"
-                )
 
 
 # =========================
@@ -408,7 +321,9 @@ async def start_bot():
 
     bind_events(client)
 
-    await client.start(DISCORD_TOKEN)
+    await client.start(
+        DISCORD_TOKEN
+    )
 
 
 if __name__ == "__main__":
