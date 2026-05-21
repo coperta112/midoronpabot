@@ -75,7 +75,17 @@ def get_latest_feed(feed_url):
 
         feed = feedparser.parse(feed_url)
 
+        # feedparserのエラー確認
+        if feed.bozo:
+            print(
+                f"RSS解析警告: {feed.bozo_exception}"
+            )
+
         if not feed.entries:
+
+            print(
+                f"RSSエントリなし: {feed_url}"
+            )
 
             return None
 
@@ -84,7 +94,7 @@ def get_latest_feed(feed_url):
         return {
             "id": entry.get(
                 "id",
-                entry.get("link")
+                entry.get("link", "")
             ),
 
             "title": entry.get(
@@ -94,7 +104,7 @@ def get_latest_feed(feed_url):
 
             "link": entry.get(
                 "link",
-                ""
+                feed_url
             ),
 
             "published": entry.get(
@@ -109,7 +119,7 @@ def get_latest_feed(feed_url):
             f"RSS取得エラー: {feed_url}"
         )
 
-        print(e)
+        traceback.print_exc()
 
         return None
 
@@ -122,6 +132,8 @@ def bind_events(c: discord.Client):
 
     @tasks.loop(seconds=CHECK_INTERVAL)
     async def check_sites():
+
+        print("RSSチェック開始")
 
         try:
 
@@ -141,11 +153,22 @@ def bind_events(c: discord.Client):
 
                 try:
 
+                    print(
+                        f"チェック中: "
+                        f"{site['name']}"
+                    )
+
                     latest = get_latest_feed(
                         site["url"]
                     )
 
                     if latest is None:
+
+                        print(
+                            f"RSS取得失敗: "
+                            f"{site['name']}"
+                        )
+
                         continue
 
                     latest_id = latest["id"]
@@ -188,15 +211,20 @@ def bind_events(c: discord.Client):
 
                         notification = (
                             f"{site.get('mention', '@everyone')}\n\n"
-                            f"📄 **{latest_title}** "
-                            f"が更新されました\n\n"
-                            f"🕒 更新日時: "
-                            f"{latest_published}\n"
+                            f"📄 **{latest_title}** が更新されました\n\n"
+                            f"🕒 更新日時: {latest_published}\n"
                             f"🔗 {latest_link}"
                         )
 
                         await channel.send(
                             notification
+                        )
+
+                    else:
+
+                        print(
+                            f"更新なし: "
+                            f"{site['name']}"
                         )
 
                 except Exception:
@@ -240,9 +268,17 @@ def bind_events(c: discord.Client):
                 f"{site['url']}"
             )
 
+        # 初回即時実行
+        await check_sites()
+
+        # ループ開始
         if not check_sites.is_running():
 
             check_sites.start()
+
+            print(
+                "check_sites 開始"
+            )
 
     @c.event
     async def on_message(message):
@@ -302,6 +338,105 @@ def bind_events(c: discord.Client):
                 "✅ チェック完了"
             )
 
+        # =========================
+        # !commands
+        # =========================
+
+        elif message.content == "!commands":
+
+            commands_msg = (
+                "**🤖 Bot コマンド一覧:**\n"
+                "`!status` - 現在の監視状況\n"
+                "`!check` - 手動チェック\n"
+                "`!commands` - コマンド一覧\n"
+                "`!help` - ヘルプ\n"
+                "`!kutabare` - ぐえ～\n"
+                "`!roll NdM` - ダイス"
+            )
+
+            await message.reply(
+                commands_msg
+            )
+
+        elif message.content == "!help":
+
+            await message.reply(
+                "たすけて～"
+            )
+
+        elif message.content == "!kutabare":
+
+            await message.reply(
+                "ぐえ～"
+            )
+
+        # =========================
+        # ダイス
+        # =========================
+
+        elif message.content.startswith("!roll"):
+
+            content = (
+                message.content[len("!roll"):].strip()
+            )
+
+            m = re.match(
+                r"^(\d+)\s*d\s*(\d+)$",
+                content
+            )
+
+            if not m:
+
+                await message.reply(
+                    "使い方: `!roll NdM`"
+                )
+
+                return
+
+            n = int(m.group(1))
+
+            sides = int(m.group(2))
+
+            if n <= 0 or sides <= 0:
+
+                await message.reply(
+                    "正の整数を指定してください"
+                )
+
+                return
+
+            if n > 100:
+
+                await message.reply(
+                    "最大100個まで"
+                )
+
+                return
+
+            rolls = [
+                random.randint(1, sides)
+                for _ in range(n)
+            ]
+
+            total = sum(rolls)
+
+            if n == 1:
+
+                await message.reply(
+                    f"🎲 出目: {rolls[0]}"
+                )
+
+            else:
+
+                rolls_str = ", ".join(
+                    map(str, rolls)
+                )
+
+                await message.reply(
+                    f"🎲 出目: [{rolls_str}]\n"
+                    f"合計: {total}"
+                )
+
 
 # =========================
 # 起動
@@ -326,6 +461,17 @@ async def start_bot():
     )
 
 
+# =========================
+# systemd対策
+# =========================
+
+def run():
+
+    asyncio.run(
+        start_bot()
+    )
+
+
 if __name__ == "__main__":
 
-    asyncio.run(start_bot())
+    run()
