@@ -370,7 +370,7 @@ def bind_events(c: discord.Client):
                 "ぐえ～"
             )
 
-        # =========================
+# =========================
         # ダイス
         # =========================
 
@@ -380,15 +380,19 @@ def bind_events(c: discord.Client):
                 message.content[len("!roll"):].strip()
             )
 
+            # NdM [<,>,<=,>=] L の形式に対応
+            # 比較演算子は <= , >= を先に判定しないと < や > に食われるので順序に注意
             m = re.match(
-                r"^(\d+)\s*d\s*(\d+)$",
+                r"^(\d+)\s*d\s*(\d+)"
+                r"(?:\s*(<=|>=|<|>)\s*(\d+))?$",
                 content
             )
 
             if not m:
 
                 await message.reply(
-                    "使い方: `!roll NdM`"
+                    "使い方: `!roll NdM` または "
+                    "`!roll NdM <,>,<=,>= L`"
                 )
 
                 return
@@ -396,6 +400,14 @@ def bind_events(c: discord.Client):
             n = int(m.group(1))
 
             sides = int(m.group(2))
+
+            op = m.group(3)
+
+            threshold = (
+                int(m.group(4))
+                if m.group(4) is not None
+                else None
+            )
 
             if n <= 0 or sides <= 0:
 
@@ -422,7 +434,7 @@ def bind_events(c: discord.Client):
 
             if n == 1:
 
-                await message.reply(
+                result_msg = (
                     f"🎲 出目: {rolls[0]}"
                 )
 
@@ -432,10 +444,40 @@ def bind_events(c: discord.Client):
                     map(str, rolls)
                 )
 
-                await message.reply(
+                result_msg = (
                     f"🎲 出目: [{rolls_str}]\n"
                     f"合計: {total}"
                 )
+
+            # =========================
+            # 判定
+            # =========================
+
+            if op is not None:
+
+                ops = {
+                    "<": lambda a, b: a < b,
+                    ">": lambda a, b: a > b,
+                    "<=": lambda a, b: a <= b,
+                    ">=": lambda a, b: a >= b,
+                }
+
+                success = ops[op](total, threshold)
+
+                judge_str = (
+                    "成功"
+                    if success
+                    else "失敗"
+                )
+
+                result_msg += (
+                    f"\n判定: 合計 {op} {threshold} → "
+                    f"{judge_str}"
+                )
+
+            await message.reply(
+                result_msg
+            )
 
 
 # =========================
