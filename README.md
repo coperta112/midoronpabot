@@ -1,6 +1,5 @@
 ## 使用技術一覧
 <img src="https://img.shields.io/badge/-Python-F9DC3E.svg?logo=python&style=flat">
-pythonさいきょ～w
 
 ## プロジェクト概要
 自鯖に欲しい機能を丸投げしたbot  
